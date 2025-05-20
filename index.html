@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>机器分配表（协作版）</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            margin: 20px;
+            font-family: Arial, sans-serif;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            min-width: 120px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+            position: sticky;
+            top: 0;
+            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1);
+        }
+        .container {
+            height: 80vh;
+            overflow: auto;
+            margin: 20px;
+        }
+        .machine-panel {
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            padding: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .machine-item {
+            padding: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+            border-radius: 3px;
+            margin: 2px 0;
+        }
+        .machine-item:hover {
+            background: #f0f0f0;
+        }
+        .selected {
+            background-color: #e6ffe6;
+            font-weight: bold;
+        }
+        #saveBtn {
+            margin: 20px;
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        #saveBtn:hover {
+            background: #45a049;
+        }
+        .conflict {
+            background-color: #ffe6e6;
+            animation: shake 0.5s;
+        }
+        #lockModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        #lockContent {
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            max-width: 80%;
+            text-align: center;
+        }
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(5px); }
+            50% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+            100% { transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+    <div id="lockModal">
+        <div id="lockContent">
+            <h2>系统提示</h2>
+            <p id="lockMessage">正在检查编辑权限...</p>
+            <button id="confirmBtn" style="display:none; margin-top:20px;">确定</button>
+        </div>
+    </div>
+
+    <button id="saveBtn" style="display:none;">保存并退出编辑</button>
+    <div class="container" style="display:none;">
+        <table id="scheduleTable">
+            <thead>
+                <tr>
+                    <th>日期</th>
+                    <th>北三环</th>
+                    <th>安贞</th>
+                    <th>安德</th>
+                    <th>小营</th>
+                    <th>支营</th>
+                    <th>大厦</th>
+                    <th>北街</th>
+                    <th>地坛</th>
+                    <th>和平街</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div id="machinePanel" class="machine-panel" style="display:none"></div>
+
+    <script>
+        // 配置GitHub仓库信息
+        const GITHUB_USER = 'pekuangkuang';
+        const REPO_NAME = 'pekuangkuang.github.io';
+        const DATA_FILE = 'schedule_data.json';
+        const LOCK_FILE = 'schedule_lock.json';
+        const TOKEN = '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'; // 需要有repo权限的token
+
+        // 机器和网点数据
+        const machines = [
+            "支营（779）", "北街（545）", "和平街（782）",
+            "地坛（781）", "安贞（777）", "北三环（778）", "小营（780）"
+        ];
+        const sites = ["北三环", "安贞", "安德", "小营", "支营", "大厦", "北街", "地坛", "和平街"];
+        let currentCell = null;
+        let currentEditor = '';
+        let editSessionId = '';
+
+        // 显示锁定模态框
+        function showLockModal(message, showButton = false) {
+            document.getElementById('lockMessage').textContent = message;
+            document.getElementById('confirmBtn').style.display = showButton ? 'block' : 'none';
+            document.getElementById('lockModal').style.display = 'flex';
+        }
+
+        // 隐藏锁定模态框
+        function hideLockModal() {
+            document.getElementById('lockModal').style.display = 'none';
+        }
+
+        // 生成随机ID
+        function generateSessionId() {
+            return 'session_' + Math.random().toString(36).substr(2, 9);
+        }
+
+        // 检查并获取编辑锁
+        async function acquireLock() {
+            editSessionId = generateSessionId();
+            currentEditor = prompt('请输入您的姓名（用于标识编辑者）:') || '匿名用户';
+            
+            try {
+                // 检查是否有锁
+                const lockResponse = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/main/${LOCK_FILE}`);
+                if (lockResponse.ok) {
+                    const lockData = await lockResponse.json();
+                    if (lockData.sessionId && lockData.sessionId !== editSessionId) {
+                        showLockModal(`${lockData.editor} 正在编辑中，请稍后再试`, true);
+                        document.getElementById('confirmBtn').onclick = () => window.location.reload();
+                        return false;
+                    }
+                }
+
+                // 创建新锁
+                const lockContent = {
+                    sessionId: editSessionId,
+                    editor: currentEditor,
+                    timestamp: new Date().toISOString()
+                };
+
+                const updateResponse = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO_NAME}/contents/${LOCK_FILE}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: 'Lock file update',
+                        content: btoa(JSON.stringify(lockContent)),
+                        sha: lockResponse.ok ? (await lockResponse.json()).sha : undefined
+                    })
+                });
+
+                if (updateResponse.ok) {
+                    return true;
+                }
+            } catch (error) {
+                console.error('获取锁失败:', error);
+            }
+            return false;
+        }
+
+        // 释放编辑锁
+        async function releaseLock() {
+            try {
+                const lockResponse = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO_NAME}/contents/${LOCK_FILE}`);
+                if (lockResponse.ok) {
+                    const lockData = await lockResponse.json();
+                    if (lockData.content) {
+                        const currentLock = JSON.parse(atob(lockData.content));
+                        if (currentLock.sessionId === editSessionId) {
+                            await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO_NAME}/contents/${LOCK_FILE}`, {
+                                method: 'DELETE',
+                                headers: {
+                                    'Authorization': `token ${TOKEN}`,
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                    message: 'Release lock',
+                                    sha: lockData.sha
+                                })
+                            });
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('释放锁失败:', error);
+            }
+        }
+
+        // 加载数据
+        async function loadData() {
+            try {
+                const response = await fetch(`https://raw.githubusercontent.com/${GITHUB_USER}/${REPO_NAME}/main/${DATA_FILE}`);
+                if (response.ok) {
+                    return await response.json();
+                }
+            } catch (error) {
+                console.error('加载数据失败:', error);
+            }
+            return {};
+        }
+
+        // 保存数据
+        async function saveData() {
+            const data = {};
+            document.querySelectorAll('tbody td[data-date]').forEach(cell => {
+                const key = `${cell.dataset.date}_${cell.dataset.site}`;
+                data[key] = cell.textContent.trim();
+            });
+
+            try {
+                // 获取当前文件SHA（用于更新）
+                const shaResponse = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO_NAME}/contents/${DATA_FILE}`);
+                let sha = null;
+                if (shaResponse.ok) {
+                    sha = (await shaResponse.json()).sha;
+                }
+
+                // 更新数据文件
+                const updateResponse = await fetch(`https://api.github.com/repos/${GITHUB_USER}/${REPO_NAME}/contents/${DATA_FILE}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `token ${TOKEN}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: 'Update schedule data',
+                        content: btoa(JSON.stringify(data)),
+                        sha: sha
+                    })
+                });
+
+                if (updateResponse.ok) {
+                    alert('数据保存成功！');
+                    await releaseLock();
+                    window.location.reload();
+                }
+            } catch (error) {
+                console.error('保存数据失败:', error);
+                alert('保存失败，请重试');
+            }
+        }
+
+        // 初始化表格
+        async function initTable() {
+            const data = await loadData();
+            const startDate = new Date('2025-05-20');
+            const endDate = new Date('2025-06-30');
+            const dates = createDateRange(startDate, endDate);
+            const tbody = document.querySelector('#scheduleTable tbody');
+
+            dates.forEach(date => {
+                const dateStr = date.toISOString().split('T')[0];
+                const row = document.createElement('tr');
+                
+                // 日期列
+                const dateCell = document.createElement('td');
+                dateCell.textContent = dateStr;
+                row.appendChild(dateCell);
+
+                // 网点列
+                sites.forEach(site => {
+                    const cell = document.createElement('td');
+                    cell.dataset.date = dateStr;
+                    cell.dataset.site = site;
+                    cell.addEventListener('click', handleCellClick);
+                    
+                    // 应用已有数据
+                    const key = `${dateStr}_${site}`;
+                    if (data[key]) {
+                        cell.textContent = data[key];
+                    }
+                    
+                    row.appendChild(cell);
+                });
+
+                tbody.appendChild(row);
+            });
+        }
+
+        // 日期范围生成
+        function createDateRange(start, end) {
+            const dates = [];
+            let current = new Date(start);
+            while (current <= end) {
+                dates.push(new Date(current));
+                current.setDate(current.getDate() + 1);
+            }
+            return dates;
+        }
+
+        // 处理单元格点击
+        function handleCellClick(e) {
+            currentCell = e.target;
+            showMachinePanel(currentCell);
+        }
+
+        // 显示机器选择面板
+        function showMachinePanel(cell) {
+            const panel = document.getElementById('machinePanel');
+            panel.innerHTML = '';
+            
+            const selected = cell.textContent.split(/, ?/).filter(Boolean);
+            const date = cell.dataset.date;
+            
+            machines.forEach(machine => {
+                const item = document.createElement('div');
+                item.className = `machine-item ${selected.includes(machine) ? 'selected' : ''}`;
+                item.textContent = machine;
+                
+                // 禁用已被选择的机器
+                if (isMachineUsed(machine, date, cell)) {
+                    item.style.opacity = '0.5';
+                    item.style.cursor = 'not-allowed';
+                } else {
+                    item.onclick = () => toggleMachine(machine, cell);
+                }
+                
+                panel.appendChild(item);
+            });
+
+            const rect = cell.getBoundingClientRect();
+            panel.style.display = 'block';
+            panel.style.left = `${rect.left}px`;
+            panel.style.top = `${rect.bottom}px`;
+        }
+
+        // 检查机器是否被使用
+        function isMachineUsed(machine, date, currentCell) {
+            return Array.from(document.querySelectorAll(`td[data-date="${date}"]`))
+                .some(cell => cell !== currentCell && cell.textContent.includes(machine));
+        }
+
+        // 切换机器选择
+        function toggleMachine(machine, cell) {
+            const current = cell.textContent.split(/, ?/).filter(Boolean);
+            const index = current.indexOf(machine);
+            
+            if (index > -1) {
+                current.splice(index, 1);
+            } else {
+                current.push(machine);
+            }
+            
+            cell.textContent = current.join(', ');
+        }
+
+        // 初始化应用
+        async function initApp() {
+            showLockModal('正在检查编辑权限...');
+            
+            const hasLock = await acquireLock();
+            if (hasLock) {
+                hideLockModal();
+                document.getElementById('saveBtn').style.display = 'block';
+                document.querySelector('.container').style.display = 'block';
+                await initTable();
+            } else {
+                // 只读模式
+                await initTable();
+                document.querySelector('.container').style.display = 'block';
+                document.querySelectorAll('td').forEach(cell => {
+                    cell.style.pointerEvents = 'none';
+                });
+            }
+        }
+
+        // 事件监听
+        document.getElementById('saveBtn').addEventListener('click', saveData);
+        document.getElementById('confirmBtn').addEventListener('click', hideLockModal);
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('td') && !e.target.closest('.machine-panel')) {
+                document.getElementById('machinePanel').style.display = 'none';
+            }
+        });
+
+        // 启动应用
+        initApp();
+
+        // 确保退出时释放锁
+        window.addEventListener('beforeunload', async (e) => {
+            if (editSessionId) {
+                e.preventDefault();
+                await releaseLock();
+            }
+        });
+    </script>
+</body>
+</html>
