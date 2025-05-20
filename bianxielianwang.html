@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>机器分配表</title>
+    <style>
+        table {
+            border-collapse: collapse;
+            margin: 20px;
+            font-family: Arial, sans-serif;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            min-width: 120px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+            position: sticky;
+            top: 0;
+            box-shadow: 0 2px 2px -1px rgba(0,0,0,0.1);
+        }
+        .container {
+            height: 80vh;
+            overflow: auto;
+            margin: 20px;
+        }
+        .machine-panel {
+            position: absolute;
+            background: white;
+            border: 1px solid #ccc;
+            padding: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .machine-item {
+            padding: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+            border-radius: 3px;
+            margin: 2px 0;
+        }
+        .machine-item:hover {
+            background: #f0f0f0;
+        }
+        .selected {
+            background-color: #e6ffe6;
+            font-weight: bold;
+        }
+        #saveBtn {
+            margin: 20px;
+            padding: 10px 20px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        #saveBtn:hover {
+            background: #45a049;
+        }
+        .conflict {
+            background-color: #ffe6e6;
+            animation: shake 0.5s;
+        }
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(5px); }
+            50% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+            100% { transform: translateX(0); }
+        }
+    </style>
+</head>
+<body>
+    <button id="saveBtn">保存并生成新文件</button>
+    <div class="container">
+        <table id="scheduleTable">
+            <thead>
+                <tr>
+                    <th>日期</th>
+                    <th>北三环</th>
+                    <th>安贞</th>
+                    <th>安德</th>
+                    <th>小营</th>
+                    <th>支营</th>
+                    <th>大厦</th>
+                    <th>北街</th>
+                    <th>地坛</th>
+                    <th>和平街</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <div id="machinePanel" class="machine-panel" style="display:none"></div>
+
+    <script>
+        // 初始化数据
+        const machines = [
+            "支营（779）", "北街（545）", "和平街（782）",
+            "地坛（781）", "安贞（777）", "北三环（778）", "小营（780）"
+        ];
+        const sites = ["北三环", "安贞", "安德", "小营", "支营", "大厦", "北街", "地坛", "和平街"];
+        let currentCell = null;
+
+        // 日期生成
+        function createDateRange(start, end) {
+            const dates = [];
+            let current = new Date(start);
+            while (current <= end) {
+                dates.push(new Date(current));
+                current.setDate(current.getDate() + 1);
+            }
+            return dates;
+        }
+
+        // 创建表格
+        function createTable() {
+            const startDate = new Date('2025-05-20');
+            const endDate = new Date('2025-06-30');
+            const dates = createDateRange(startDate, endDate);
+            const tbody = document.querySelector('#scheduleTable tbody');
+
+            dates.forEach(date => {
+                const dateStr = date.toISOString().split('T')[0];
+                const row = document.createElement('tr');
+                
+                // 日期列
+                const dateCell = document.createElement('td');
+                dateCell.textContent = dateStr;
+                row.appendChild(dateCell);
+
+                // 网点列
+                sites.forEach(site => {
+                    const cell = document.createElement('td');
+                    cell.dataset.date = dateStr;
+                    cell.dataset.site = site;
+                    cell.addEventListener('click', handleCellClick);
+                    row.appendChild(cell);
+                });
+
+                tbody.appendChild(row);
+            });
+            
+            // 加载嵌入数据
+            const embeddedData = document.getElementById('embeddedData');
+            if (embeddedData) {
+                const data = JSON.parse(embeddedData.textContent);
+                applyData(data);
+            }
+        }
+
+        // 应用数据到表格
+        function applyData(data) {
+            Object.entries(data).forEach(([key, value]) => {
+                const [date, site] = key.split('_');
+                const cell = document.querySelector(
+                    `td[data-date="${date}"][data-site="${site}"]`
+                );
+                if (cell) cell.textContent = value;
+            });
+        }
+
+        // 处理单元格点击
+        function handleCellClick(e) {
+            currentCell = e.target;
+            showMachinePanel(currentCell);
+        }
+
+        // 显示选择面板
+        function showMachinePanel(cell) {
+            const panel = document.getElementById('machinePanel');
+            panel.innerHTML = '';
+            
+            const selected = cell.textContent.split(/, ?/).filter(Boolean);
+            const date = cell.dataset.date;
+            
+            machines.forEach(machine => {
+                const item = document.createElement('div');
+                item.className = `machine-item ${selected.includes(machine) ? 'selected' : ''}`;
+                item.textContent = machine;
+                
+                // 禁用已被选择的机器
+                if (isMachineUsed(machine, date, cell)) {
+                    item.style.opacity = '0.5';
+                    item.style.cursor = 'not-allowed';
+                } else {
+                    item.onclick = () => toggleMachine(machine, cell);
+                }
+                
+                panel.appendChild(item);
+            });
+
+            const rect = cell.getBoundingClientRect();
+            panel.style.display = 'block';
+            panel.style.left = `${rect.left}px`;
+            panel.style.top = `${rect.bottom}px`;
+        }
+
+        // 检查机器是否被使用
+        function isMachineUsed(machine, date, currentCell) {
+            return Array.from(document.querySelectorAll(`td[data-date="${date}"]`))
+                .some(cell => cell !== currentCell && cell.textContent.includes(machine));
+        }
+
+        // 切换机器选择
+        function toggleMachine(machine, cell) {
+            const current = cell.textContent.split(/, ?/).filter(Boolean);
+            const index = current.indexOf(machine);
+            
+            if (index > -1) {
+                current.splice(index, 1);
+            } else {
+                current.push(machine);
+            }
+            
+            cell.textContent = current.join(', ');
+        }
+
+        // 生成包含数据的HTML文件
+        function generateHTML() {
+            // 收集数据
+            const data = {};
+            document.querySelectorAll('tbody td[data-date]').forEach(cell => {
+                const key = `${cell.dataset.date}_${cell.dataset.site}`;
+                data[key] = cell.textContent.trim();
+            });
+
+            // 构建完整HTML内容
+            const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>机器分配表</title>
+    <style>
+        ${document.querySelector('style').innerHTML}
+    </style>
+    <script id="embeddedData" type="application/json">
+        ${JSON.stringify(data)}
+    <\/script>
+</head>
+<body>
+    ${document.body.innerHTML.replace('<button id="saveBtn">保存并生成新文件</button>', '')}
+    <script>
+        ${createTable.toString()}
+        ${applyData.toString()}
+        ${handleCellClick.toString()}
+        ${showMachinePanel.toString()}
+        ${isMachineUsed.toString()}
+        ${toggleMachine.toString()}
+        ${generateHTML.toString()}
+        
+        // 初始化
+        document.getElementById('saveBtn').addEventListener('click', generateHTML);
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('td') && !e.target.closest('.machine-panel')) {
+                document.getElementById('machinePanel').style.display = 'none';
+            }
+        });
+        
+        createTable();
+    <\/script>
+</body>
+</html>`;
+
+            // 创建下载链接
+            const blob = new Blob([htmlContent], {type: 'text/html'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `schedule_${new Date().toISOString().slice(0,10)}.html`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // 事件监听
+        document.getElementById('saveBtn').addEventListener('click', generateHTML);
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('td') && !e.target.closest('.machine-panel')) {
+                document.getElementById('machinePanel').style.display = 'none';
+            }
+        });
+
+        // 初始化表格
+        createTable();
+    </script>
+</body>
+</html>
